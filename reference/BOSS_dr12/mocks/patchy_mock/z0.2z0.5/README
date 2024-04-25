@@ -1,0 +1,3 @@
+For dir bins3/ bins5/:
+data info: smin(1) combined(2) NGC(3) SGC(4)
+cov name: s2True/Flase: covariance of xi/xi*s^2
