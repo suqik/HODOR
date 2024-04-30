@@ -6,6 +6,8 @@ import json
 from getdist import MCSamples, plots
 
 base = sys.argv[1]
+cattype = base.split("_")[-1].strip('/')
+
 config_file = "configs/config_test_5param.ini"
 
 config = configparser.ConfigParser()
@@ -25,22 +27,21 @@ tmp = np.loadtxt(base+".txt")
 # weights = tmp[:,0]
 loglikes = (tmp[:,1])/2 # -loglikes
 samples = MCSamples(samples=tmp[:,2:], names=parameters_names, labels=['logM_{cut}', '\sigma_{logM_1}', 'logM_1', name_label[3], '\\alpha'],\
-                     ranges=prior_params, loglikes=loglikes) #
+                     ranges=prior_params, loglikes=loglikes) #, weights=weights
+samples2 = MCSamples(samples=tmp[:,2:], names=parameters_names, labels=['logM_{cut}', '\sigma_{logM_1}', 'logM_1', name_label[3], '\\alpha'],)
 
 # get last modification time of chain file
-fmttime = time.localtime(os.path.getmtime(base+".txt"))
-HMstr = time.strftime("%H%M", fmttime)
-Dint = int(time.strftime("%d", fmttime))
-Dint -= 24
-
-if Dint == 0:
-    Dstr = ""
-else:
-    Dstr = f"_{Dint}"
+fmtctime = time.localtime(os.path.getctime(base+"params.json"))
+fmtmtime = time.localtime(os.path.getmtime(base+".txt"))
+HMstr = time.strftime("%H%M", fmtmtime)
+cDint = int(time.strftime("%d", fmtctime))
+mDint = int(time.strftime("%d", fmtmtime))
+Dint  = mDint - cDint
 
 g = plots.get_subplot_plotter(subplot_size=1)
-g.triangle_plot([samples], 
-                filled=True, 
+g.triangle_plot([samples, samples2], 
+                legend_labels=["w/ prior", "w/o prior"],
+                filled=False, 
                 contour_lws=1.2 , 
                 )
-g.export(f'results/contour/hod_5params_wRSD{Dstr}_{HMstr}_w_prior.png',dpi=400)
+g.export(f'results_{cattype}/contour/hod_5params_wRSD_{Dint}_{HMstr}.png',dpi=400)

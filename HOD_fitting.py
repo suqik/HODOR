@@ -1,4 +1,5 @@
 import os
+import sys
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -14,6 +15,15 @@ from WLutil.base.utils import read_bigfile_header
 from WLutil.measure import get_auto_2pcf, get_proj_2pcf
 
 import pymultinest as pmn
+
+if len(sys.argv) != 2:
+    print("Usage: python HOD_fitting.py CATALOG_TYPE.")
+    print("Support types: i) fpm (for FastPM) ii) nbd (for Nbody)")
+    exit(0)
+
+cattype = (sys.argv[1]).lower()
+if cattype != "fpm" and cattype != 'nbd':
+    raise ValueError(f"Cannot recognize catalog type {cattype}! Support types: i) fpm (for FastPM) ii) nbd (for Nbody)")
 
 wdir="/home/suchen/Program/SBI_Void/simulator/HODOR/"
 config_file=wdir+"configs/config_test_5param.ini"
@@ -32,26 +42,43 @@ for p in parameters_names:
 ######################### Loading Cov_Matrix, Ref_Data_Vector ############################
 ### BOSS projected correlation functions
 ### rp numbins and range; see BOSS HOD paper
+
 data_vec = []
 
 tmp = np.loadtxt(wdir+"reference/BOSS_dr12/data/wp/galaxy_DR12v5_CMASSLOWZTOT_North.fits.proj")
 rp_ref = tmp[:,0]
 ref_data_vector = tmp[:,-1]
 
-cov=np.loadtxt(wdir+"reference/BOSS_dr12/mocks/patchy_mock/wp/Patchy_mock_2048.Cov")
-icov = np.linalg.inv(cov)
+ref_cov = np.loadtxt(wdir+"reference/BOSS_dr12/mocks/patchy_mock/wp/Patchy_mock_2048.Cov")
 
-####### my load catalog
+################################## Loading HALO catalog ##################################
 halo_cat_list=[]
 halo_files=[]
-
-header = read_bigfile_header(wdir+"../catalog/calibration/jiajun/N512/a_0.7692/", dataset='RFOF/', header='Header')
-redshift = 1./header['ScalingFactor'][0] - 1
-boxsize = header['BoxSize'][0]
-particle_mass = header['MassTable'][1]*1e10
-
 halo = Tracer()
-halo.load_from_bigfile(wdir+"../catalog/calibration/jiajun/N512/a_0.7692/", dataset='RFOF/', header='Header')
+
+####### load FastPM catalog
+if cattype == 'fpm':
+    header = read_bigfile_header(wdir+"../catalog/calibration/jiajun/N512/a_0.7692/", dataset='RFOF/', header='Header')
+    redshift = 1./header['ScalingFactor'][0] - 1
+    boxsize = header['BoxSize'][0]
+    particle_mass = header['MassTable'][1]*1e10 
+    halo.load_from_bigfile(wdir+"../catalog/calibration/jiajun/N1024/a_0.7692/", dataset='RFOF/', header='Header')
+    halo.Mass = halo.Mass*1e10 # Msun/h
+
+####### load Nbody catalog
+if cattype == 'nbd':
+    halo.load_from_ascii(wdir+"../catalog/Nbody/jiajun/snapshot_011.z0.300.AHF_halos",\
+                        ids=0, 
+                        pos=[5,7],
+                        vel=[8,10],
+                        pids=1, 
+                        Radius=11, 
+                        Mass=3,
+                        nfw_c=42)
+    halo.kpc2Mpc()
+    redshift = 0.3
+    boxsize = 400.0
+    particle_mass = 4.17684421*1e10
 
 halo_cat=UserSuppliedHaloCatalog(
     redshift=redshift,
@@ -66,7 +93,7 @@ halo_cat=UserSuppliedHaloCatalog(
     halo_vz=halo.vel[:,2],
     halo_id=halo.ids,
     halo_rvir=halo.Radius,
-    halo_mvir=halo.Mass*1e10,
+    halo_mvir=halo.Mass,
     halo_nfw_conc=halo.nfw_c,  ### concentration of NFW
     halo_hostid=halo.ids
 )
@@ -74,16 +101,12 @@ halo_cat=UserSuppliedHaloCatalog(
 halo_cat_list.append(halo_cat)
 halo_files.append("dummy.cat")   ### give some *arbitary* names, useless
 
-### make 10 copies of the same halo catalogue, 
-### generate 10 HOD realizations,
-### take an average of their correlation functions,
-### to decrease cosmic variance
-
-# ################### Initialize HOD Models #####################
+################### Initialize HOD Models #####################
 
 model_instance=ModelClass(config_file=config_file, halo_files=halo_files, halo_cat_list=halo_cat_list)
 
-num_dens_gal=3.5e-3  ### galaxy density
+num_dens_gal=3.5e-4  ### galaxy density
+has_mCov = False ### if or not including model standard deviation
 
 rcat_rng = np.random.default_rng(seed=1000)
 
@@ -121,16 +144,23 @@ def loglike(cube, ndim, nparams):
         # s, mono, quad, hex = get_auto_2pcf(xyz_gal, boxsize=boxsize, rand1=np.random.rand(len(xyz_gal), 3)*boxsize, min_sep=3, max_sep=198, scale='linear', nbins=66)
         rp, wp = get_proj_2pcf(xyz_gal, boxsize=boxsize, rand1=rcat_rng.random((len(xyz_gal)*10, 3))*boxsize, conf=pyfcfc_conf, min_sep=0.5, max_sep=50, nbins=14, min_pi=0, max_pi=80, npbins=40,)
 
-        # tmp.append(mono*s**2)
         tmp.append(wp)
+
     model_vector = np.mean(np.asarray(tmp), axis=0)
+    model_cov = np.diag(np.var(np.asarray(tmp), axis=0))
 
-    ### here the output Xi0 and Xi2 have already been averaged over all 10 galaxy catalogues.
+    cut = 4
+    diff_vector = ref_data_vector[cut:] - np.array(model_vector[cut:])
 
-    diff_vector=ref_data_vector-np.array(model_vector)
+    if has_mCov:
+        covtot = ref_cov[cut:,cut:] + model_cov[cut:,cut:]
+    else:
+        covtot = ref_cov[cut:,cut:]
 
-    chi2=np.dot(diff_vector.T, np.dot(icov, diff_vector))
-    chi2=-0.5*chi2
+    icovtot = np.linalg.inv(covtot)
+
+    chi2 = np.dot(diff_vector.T, np.dot(icovtot, diff_vector))
+    chi2 = -0.5*chi2
 
     if chi2 is np.nan:
         return -1e101
@@ -148,7 +178,7 @@ multinest_verbose=config["multinest"].getboolean("verbose")
 multinest_tol=config["multinest"].getfloat("tol")
 multinest_live_points=config["multinest"].getint("live_points")
 
-multinest_opdir = wdir+"multinest_out/"
+multinest_opdir = wdir+f"multinest_out_{cattype}/"
 if not os.path.isdir(multinest_opdir):
     os.mkdir(multinest_opdir)
 
@@ -160,7 +190,7 @@ pmn.run(loglike,
         prior, 
         num_params, 
         outputfiles_basename=multinest_opdir, 
-        resume=False,
+        resume=True,
         verbose=multinest_verbose, 
         n_live_points=multinest_live_points, 
         evidence_tolerance=multinest_tol, 
