@@ -1,2 +1,6 @@
-multinest_out/
+multinest_out*
 WRONG_DATA/
+old/
+results_fpm/
+results_nbd/
+multinest_out_fpm/
