@@ -163,7 +163,7 @@ class ModelClass():
 		### Velocity Dispersion
 		range_ = gtable['gal_type'] == 0
 		# vdisp = self.model_instance.param_dict["vdisp"]
-		vdisp = 0.0
+		vdisp = 1.0
 		gtable['vz'][range_] = (gtable['vz'][range_] - gtable['halo_vz'][range_]) * vdisp + gtable['halo_vz'][range_]
 
 		# RSD shift along OZ axis.
